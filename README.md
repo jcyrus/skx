@@ -141,12 +141,40 @@ quits** — `q` and `Ctrl-C` are the only two ways out.
 | `S` | Sync **everything** — asks first |
 | `d` | Discover unmanaged skills on disk |
 | `?` / `F1` | Toggle the key map |
-| `q` / `Ctrl-C` | Quit |
+| `q` | Quit — confirms first |
+| `Ctrl-C` | Quit immediately, no prompt |
+| `Ctrl-Z` | Suspend to the shell (`fg` to resume) |
+
+The mouse works where the terminal reports it: click a pane to focus it, click a
+row to select it, and the wheel scrolls whatever is under the pointer. Only
+left-click and the wheel are wired — reacting to drags fights the terminal's own
+text selection, which is how people copy things out of it.
 
 Effort scales with consequence: `s` touches only the row under the cursor, while
 `S` writes across every declared target and shows a confirmation. Syncing runs on
 a worker thread with a determinate progress bar, so the interface keeps
 responding instead of freezing for the duration.
+
+### Configuration
+
+Preferences live at `~/.config/skx/config.toml` and every key is optional:
+
+```toml
+theme = "auto"             # "light" | "dark" | "auto"
+confirm_quit = true        # ask before quitting even when nothing is pending
+mouse = true               # click to focus and select, wheel to scroll
+set_terminal_title = true
+```
+
+Keys `skx` doesn't recognise are preserved, so a config written by a newer
+version survives a round-trip through an older one. A malformed config is an
+error rather than a silent fallback — quietly ignoring a typo and behaving
+differently than the file says is worse than refusing to start.
+
+`skx` asks before quitting whenever there is something to lose: unsynced target
+changes, or a sync still running. That happens regardless of `confirm_quit`,
+which only governs the quiet case. `Ctrl-C` always exits immediately —
+a confirmation on the universal abort key is the one place a prompt is wrong.
 
 ### Theming & accessibility
 
@@ -162,6 +190,10 @@ Resolution order is `SKX_THEME` → `COLORFGBG` → dark. There is no portable w
 *ask* a terminal for its background colour — the OSC 11 query needs a raw-mode
 read with a timeout and several emulators ignore it silently — so the explicit
 setting stays authoritative rather than being a mere override.
+
+`NO_COLOR` is honoured: any non-empty value drops the palette to the terminal's
+own defaults. Nothing becomes unreadable, because every state the cockpit encodes
+in colour is also encoded in glyph or position.
 
 Colour depth is detected from `COLORTERM`/`TERM` and the palette is quantised once
 at startup. The 16-colour surfaces are hand-authored rather than derived: sixteen
