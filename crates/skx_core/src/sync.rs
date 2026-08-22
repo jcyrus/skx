@@ -45,14 +45,25 @@ pub fn apply(
                 LinkStrategy::Symlink => {
                     let target = cache_source
                         .expect("LinkStrategy::Symlink requires a cache_source to link against");
-                    replace_with_symlink(path, target)?;
+                    let linked = replace_with_symlink(path, target)?;
                     let resolved = std::fs::read(target).map_err(|source| SkillError::Io {
                         path: target.to_path_buf(),
                         source,
                     })?;
+                    if !linked {
+                        // Fell back to a copy (see `replace_with_symlink`).
+                        // Recording `symlink_target: None` is what keeps
+                        // drift detection honest: the artifact is now a
+                        // plain file, so it must be audited by content hash
+                        // rather than by where a link points.
+                        std::fs::write(path, &resolved).map_err(|source| SkillError::Io {
+                            path: path.to_path_buf(),
+                            source,
+                        })?;
+                    }
                     Ok(WriteResult {
                         content_hash: hash_content(&resolved),
-                        symlink_target: Some(target.to_path_buf()),
+                        symlink_target: linked.then(|| target.to_path_buf()),
                     })
                 }
                 LinkStrategy::Compile => {
@@ -353,12 +364,42 @@ fn create_parent_dirs(path: &Path) -> Result<()> {
 
 /// Removes whatever currently sits at `path` (file or symlink) and puts a
 /// symlink to `target` in its place.
-fn replace_with_symlink(path: &Path, target: &Path) -> Result<()> {
+///
+/// Returns `false` when the platform refused to create the link and the
+/// caller should write a copy instead.
+///
+/// Windows only creates symlinks for accounts with Developer Mode enabled
+/// or an elevated prompt, so on an ordinary desktop every sync would fail
+/// with a bare "A required privilege is not held by the client". Degrading
+/// to a copy keeps `skx` usable there. The cost is real and not hidden: a
+/// copy doesn't track later edits to the cached skill, so the artifact
+/// shows up as stale on the next `skx audit` and needs a re-sync — which is
+/// exactly what a copy *should* do, and why the fallback is reported rather
+/// than silently swallowed.
+fn replace_with_symlink(path: &Path, target: &Path) -> Result<bool> {
     remove_existing(path)?;
-    symlink(target, path).map_err(|source| SkillError::Io {
-        path: path.to_path_buf(),
-        source,
-    })
+    match symlink(target, path) {
+        Ok(()) => Ok(true),
+        Err(source) if is_unsupported_symlink(&source) => Ok(false),
+        Err(source) => Err(SkillError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+/// Whether an error means "this platform won't let me symlink" rather than
+/// something genuinely wrong (a missing parent, a full disk).
+///
+/// Only ever true on Windows: on Unix a `PermissionDenied` here means the
+/// destination really is unwritable, and quietly writing a copy would hide
+/// a problem the user needs to know about.
+fn is_unsupported_symlink(error: &std::io::Error) -> bool {
+    cfg!(windows)
+        && matches!(
+            error.kind(),
+            std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported
+        )
 }
 
 /// Removes whatever currently sits at `path` if it's a symlink, so a plain
@@ -556,6 +597,18 @@ mod tests {
         assert_eq!(std::fs::read_link(&link_path).unwrap(), cache);
         assert_eq!(result.content_hash, hash_content(b"canonical content"));
         assert_eq!(result.symlink_target, Some(cache));
+    }
+
+    #[test]
+    fn a_unix_symlink_failure_is_reported_rather_than_copied_over() {
+        // The Windows fallback must not mask a genuine problem on Unix: a
+        // permission error there means the destination really is
+        // unwritable, and writing a copy anyway would hide it.
+        let denied = std::io::Error::from(std::io::ErrorKind::PermissionDenied);
+        assert_eq!(is_unsupported_symlink(&denied), cfg!(windows));
+
+        let disk_full = std::io::Error::other("no space left on device");
+        assert!(!is_unsupported_symlink(&disk_full));
     }
 
     #[test]

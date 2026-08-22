@@ -44,3 +44,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `Esc` quit the application when no filter was set.
 - `Space` refused to toggle a target unless the Agent Matrix already held
   focus, despite the footer advertising it unconditionally.
+- Skill names were validated against skx's own rules rather than the spec's:
+  up to 128 characters instead of 64, and consecutive hyphens were accepted.
+  Both would install a skill the downstream agents then reject.
+- Syncing on Windows failed outright for accounts without Developer Mode or
+  an elevated prompt, because every symlink creation was rejected. skx now
+  falls back to a copy there and records it as one, so drift detection stays
+  accurate.

@@ -147,10 +147,13 @@ impl SkillName {
                 reason: "must not be empty".to_string(),
             });
         }
-        if raw.len() > 128 {
+        // 64 is the Agent Skills spec's limit. Accepting longer names would
+        // let skx install a skill that the agents it compiles for then
+        // reject, which is a failure the user only discovers downstream.
+        if raw.chars().count() > 64 {
             return Err(SkillError::InvalidName {
                 name: raw.to_string(),
-                reason: "must be 128 characters or fewer".to_string(),
+                reason: "must be 64 characters or fewer".to_string(),
             });
         }
         if !raw
@@ -167,6 +170,12 @@ impl SkillName {
             return Err(SkillError::InvalidName {
                 name: raw.to_string(),
                 reason: "must not start or end with a hyphen".to_string(),
+            });
+        }
+        if raw.contains("--") {
+            return Err(SkillError::InvalidName {
+                name: raw.to_string(),
+                reason: "must not contain consecutive hyphens".to_string(),
             });
         }
         Ok(Self(raw.to_string()))
@@ -252,6 +261,21 @@ mod tests {
     #[test]
     fn accepts_kebab_case_name() {
         assert!(SkillName::parse("rust-systems-expert").is_ok());
+    }
+
+    #[test]
+    fn names_follow_the_agent_skills_spec() {
+        // Accepting a name the downstream agents reject only moves the
+        // failure to somewhere the user can't diagnose it.
+        assert!(SkillName::parse(&"a".repeat(64)).is_ok());
+        assert!(SkillName::parse(&"a".repeat(65)).is_err());
+        assert!(SkillName::parse("pdf--processing").is_err());
+        assert!(SkillName::parse("pdf-processing").is_ok());
+        assert!(SkillName::parse("-leading").is_err());
+        assert!(SkillName::parse("trailing-").is_err());
+        assert!(SkillName::parse("PDF").is_err());
+        assert!(SkillName::parse("").is_err());
+        assert!(SkillName::parse("skill2").is_ok());
     }
 
     #[test]
