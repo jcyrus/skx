@@ -8,11 +8,20 @@ use std::process::Output;
 
 const SAMPLE_SKILL: &str = "---\nname: rust-systems-expert\ndescription: Deep systems architectural conventions\nversion: 1.0.0\ntriggers:\n  - \"*.rs\"\ntargets:\n  antigravity:\n    scope: workspace\n    auto_activate: true\n  claude_code:\n    enabled: true\n  cursor:\n    glob: \"**/*.rs\"\n  copilot:\n    enabled: true\nmcp_dependencies:\n  - name: rust-analyzer-mcp\n    command: rust-analyzer-mcp\n    args: [\"--stdio\"]\n---\n\n# Rust Systems Engineering Instructions\n\n- Prefer zero-cost abstractions.\n";
 
+/// Runs the real binary against a throwaway home directory.
+///
+/// `HOME` alone isn't enough: `dirs::home_dir()` reads `USERPROFILE` on
+/// Windows and ignores `HOME` entirely, so tests that set only `HOME` there
+/// resolved the *developer's* actual home and then asserted against a temp
+/// directory that skx had never written to. Setting both keeps the sandbox
+/// real on every platform — and matters beyond test hygiene, since a test
+/// escaping into the real home would write skills into it.
 fn run(workspace: &Path, home: &Path, args: &[&str]) -> Output {
     std::process::Command::new(env!("CARGO_BIN_EXE_skx"))
         .args(args)
         .current_dir(workspace)
         .env("HOME", home)
+        .env("USERPROFILE", home)
         .output()
         .expect("failed to run skx binary")
 }
