@@ -12,6 +12,7 @@ A working Rust implementation — four crates, 90+ tests, zero clippy warnings. 
 
 - **Spec-compliant frontmatter:** Implements the [Agent Skills spec](https://agentskills.io/specification) — `name`, `description`, `license`, `compatibility`, `allowed-tools` and `metadata` — alongside `skx`'s own `triggers`, `targets` and `mcp_dependencies`. Any key `skx` doesn't model is **preserved verbatim** through a round-trip rather than silently dropped, which matters because `skx` symlinks its rendered copy over the original.
 - **Universal Skill Engine:** Write standard canonical markdown (`SKILL.md`) with rich frontmatter. `skx` translates triggers and globs into each target agent's own dialect — a Cursor `glob` override wins when present, otherwise canonical `triggers` are translated for you.
+- **A skill is a directory:** `SKILL.md` plus the spec's optional `scripts/`, `references/` and `assets/`. All of it is cached and linked together, so relative file references in a skill body resolve wherever the skill is synced or exported to.
 - **Sync, Symlinks & Static Export:** Zero-copy symlinks for targets whose format *is* the canonical one (Antigravity, Claude Code) — instant updates, no double-editing. `skx export` compiles everything into standalone static files instead, for committing to a team repo or feeding to CI, where a symlink back into `~/.config/skx` wouldn't survive the trip.
 - **Interactive TUI Cockpit:** Keyboard-driven dashboard (`k9s`/`btop`/`lazygit` style) — a workspace drift-and-token meter across the top, a full-width skill table (author, version, **approximate context cost**, and a per-target status column) above a **markdown-rendered** preview and a live agent matrix. `/` filters, `j`/`k` navigate, `Tab` switches pane, `Space` toggles a target on/off, `s` syncs, `?` shows the key map.
 - **MCP Tool Bundling:** Pair markdown instructions with the Model Context Protocol servers they depend on — `skx` merges each one into the target runtime's `mcp.json` at its own key, never clobbering servers other skills or the user configured directly.
@@ -24,7 +25,8 @@ A working Rust implementation — four crates, 90+ tests, zero clippy warnings. 
 
 ```
                     [ Central Cache (global) ]   [ Workspace Cache (local) ]
-               ~/.config/skx/skills/<name>/SKILL.md   .skx/skills/<name>/SKILL.md
+                ~/.config/skx/skills/<name>/     .skx/skills/<name>/
+                  SKILL.md + scripts/ + references/ + assets/
                                                │
                    ┌──────────────────────────────────────────────────────┐
                    │     skx_core / skx_adapters / skx_cli / skx_tui      │
@@ -33,8 +35,8 @@ A working Rust implementation — four crates, 90+ tests, zero clippy warnings. 
          ▼                  ▼                  ▼                  ▼                  ▼
   [ Antigravity ]    [ Claude Code ]       [ Cursor ]     [ GitHub Copilot ]  [ MCP runtime ]
   .agents/skills/    .claude/skills/     .cursor/rules/    .github/copilot-   .vscode/mcp.json
-  <name>/SKILL.md    <name>/SKILL.md       <name>.mdc      instructions.md   or goose/mcp.json
-     (symlink)          (symlink)          (compiled)      (marked region)     (merged JSON)
+     <name>/            <name>/             <name>.mdc      instructions.md   or goose/mcp.json
+  (dir symlink)      (dir symlink)         (compiled)      (marked region)     (merged JSON)
 ```
 
 ---
@@ -200,6 +202,27 @@ at startup. The 16-colour surfaces are hand-authored rather than derived: sixtee
 colours cannot express three near-black backgrounds, so a generic mapping
 collapses them onto one and destroys the distinction between a table header and
 the selected row.
+
+---
+
+### Upgrading from an earlier sync
+
+Earlier versions linked `SKILL.md` alone and left the surrounding directory
+real, so anything a skill shipped lived at the destination and nowhere else.
+The first `skx sync` after upgrading migrates that layout, and reports it:
+
+```
+$ skx sync
+  adopted .agent_version into the cache for graphify
+  adopted references/notes.md into the cache for graphify
+Synced 1 skill(s), wrote/linked 1 artifact(s).
+```
+
+Any real file at the destination that skx didn't write is copied into the
+cache before the directory is replaced by a link. Symlinks are skipped —
+those are skx's own prior artifacts — and existing cache entries always win,
+so re-running can't overwrite the canonical copy with a stale one. Nothing
+is deleted silently.
 
 ---
 
