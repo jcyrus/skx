@@ -44,8 +44,11 @@ pub enum SkillError {
     #[error("failed to parse state file {path}: {source}")]
     InvalidState {
         path: PathBuf,
+        // Boxed: `toml::de::Error` is 96 bytes on its own, which alone put
+        // `SkillError` over clippy's `result_large_err` threshold on
+        // Windows and made every `Result` in the crate carry it.
         #[source]
-        source: toml::de::Error,
+        source: Box<toml::de::Error>,
     },
 
     #[error("failed to serialize state file {path}: {source}")]
@@ -59,7 +62,7 @@ pub enum SkillError {
     InvalidManifest {
         path: PathBuf,
         #[source]
-        source: toml::de::Error,
+        source: Box<toml::de::Error>,
     },
 
     #[error("failed to serialize manifest {path}: {source}")]
@@ -84,3 +87,26 @@ pub enum SkillError {
 }
 
 pub type Result<T> = std::result::Result<T, SkillError>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `SkillError` rides in the `Err` arm of nearly every function in this
+    /// crate, so its size is a cost paid on every call.
+    ///
+    /// This exists because it silently grew past clippy's 128-byte
+    /// `result_large_err` threshold — and only failed CI on Windows, whose
+    /// `io::Error` is wider than Unix's. A local `cargo clippy` was clean
+    /// while the build was already broken on a platform most contributors
+    /// won't have. Asserting the size directly catches it everywhere.
+    #[test]
+    fn stays_small_enough_to_return_by_value() {
+        let size = std::mem::size_of::<SkillError>();
+        assert!(
+            size <= 128,
+            "SkillError grew to {size} bytes; clippy::result_large_err fires above 128. \
+             Box the offending variant's payload rather than raising this bound."
+        );
+    }
+}

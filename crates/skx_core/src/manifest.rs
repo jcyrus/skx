@@ -55,7 +55,7 @@ impl Manifest {
         })?;
         toml::from_str(&raw).map_err(|source| SkillError::InvalidManifest {
             path: path.to_path_buf(),
-            source,
+            source: Box::new(source),
         })
     }
 
