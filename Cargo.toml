@@ -1,0 +1,50 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/skx_core",
+    "crates/skx_adapters",
+    "crates/skx_tui",
+    "crates/skx_cli",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+# Edition 2024 needs 1.85; the let-chains used throughout need 1.88.
+rust-version = "1.88"
+license = "MIT"
+repository = "https://github.com/jcyrus/skx"
+homepage = "https://github.com/jcyrus/skx"
+authors = ["Cyrus Espiritu"]
+keywords = ["ai", "agents", "skills", "cli", "tui"]
+categories = ["command-line-utilities", "development-tools"]
+
+[workspace.dependencies]
+skx_core = { path = "crates/skx_core" }
+skx_adapters = { path = "crates/skx_adapters" }
+skx_tui = { path = "crates/skx_tui" }
+
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+serde_json = "1"
+toml = "0.8"
+sha2 = "0.10"
+walkdir = "2"
+notify = "6"
+thiserror = "1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+clap = { version = "4", features = ["derive"] }
+ratatui = "0.30"
+crossterm = "0.29"
+tempfile = "3"
+tui-markdown = "0.3"
+tui-scrollview = "0.6"
+nucleo-matcher = "0.3"
+dirs = "5"
+libc = "0.2"
+
+[profile.release]
+lto = true
+codegen-units = 1

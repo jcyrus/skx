@@ -1,0 +1,21 @@
+# Build output
+/target
+
+# skx's own runtime state.
+#
+# This repository is a skx workspace as well as skx's source, because we
+# dogfood it. `skx.toml` records which skills are installed *on this
+# machine* with absolute paths into the developer's home directory, and
+# `.skx/` is the local artifact cache — neither is meaningful to anyone
+# else, and committing them would leak local paths and break on clone.
+/skx.toml
+/.skx/
+
+# Export target used by `skx export`
+/skx-export/
+
+# Editor / OS noise
+.DS_Store
+*.swp
+.idea/
+.vscode/

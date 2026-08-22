@@ -1,0 +1,20 @@
+[package]
+name = "skx_adapters"
+version.workspace = true
+edition.workspace = true
+description = "Per-agent compilation targets for skx: Antigravity, Claude Code, Cursor, Copilot, MCP."
+license.workspace = true
+rust-version.workspace = true
+repository.workspace = true
+
+[dependencies]
+skx_core.workspace = true
+serde.workspace = true
+serde_yaml.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
