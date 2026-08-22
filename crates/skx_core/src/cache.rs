@@ -15,9 +15,18 @@ pub fn cache_dir(scope: Scope, root: &Path, home: &Path) -> PathBuf {
     }
 }
 
+/// The canonical directory for `name` at `scope`.
+///
+/// A skill is a directory, not a file: the spec allows `scripts/`,
+/// `references/` and `assets/` alongside `SKILL.md`, and the body refers to
+/// them by relative path. This is the unit that gets cached and linked.
+pub fn skill_dir(scope: Scope, root: &Path, home: &Path, name: &str) -> PathBuf {
+    cache_dir(scope, root, home).join(name)
+}
+
 /// The canonical `SKILL.md` path for `name` at `scope`.
 pub fn skill_path(scope: Scope, root: &Path, home: &Path, name: &str) -> PathBuf {
-    cache_dir(scope, root, home).join(name).join("SKILL.md")
+    skill_dir(scope, root, home, name).join("SKILL.md")
 }
 
 #[cfg(test)]

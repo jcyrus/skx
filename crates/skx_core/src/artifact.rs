@@ -59,6 +59,19 @@ pub enum Artifact {
         pointer: String,
         value: JsonValue,
     },
+    /// skx owns this whole directory, mirrored from `source` in the cache.
+    ///
+    /// The Agent Skills spec defines a skill as a *directory* — `SKILL.md`
+    /// plus optional `scripts/`, `references/` and `assets/` that the body
+    /// references by relative path. Modelling only the `SKILL.md` left those
+    /// siblings behind: it happened to work when the link landed back beside
+    /// the originals, and broke the moment a skill was exported or synced to
+    /// any other target root, with the file references silently dangling.
+    ///
+    /// Only [`LinkStrategy::Symlink`] targets use this. A compiling target
+    /// transforms the skill into its own format and has no directory to
+    /// mirror.
+    OwnedDir { path: PathBuf, source: PathBuf },
 }
 
 impl Artifact {
@@ -68,6 +81,7 @@ impl Artifact {
             Artifact::OwnedFile { path, .. } => path,
             Artifact::Region { path, .. } => path,
             Artifact::MergeJson { path, .. } => path,
+            Artifact::OwnedDir { path, .. } => path,
         }
     }
 }
@@ -90,5 +104,15 @@ pub struct CompileCtx<'a> {
     /// The user's home directory. Always available even in local scope,
     /// since some targets (e.g. Claude Code) read from both.
     pub home: &'a Path,
+    /// Which scope's *output* paths to resolve.
     pub scope: crate::Scope,
+    /// The skill's canonical directory in the cache.
+    ///
+    /// Passed explicitly rather than derived from `scope`, because the two
+    /// genuinely differ: `skx export` redirects output into a throwaway
+    /// directory by setting `root`/`scope`, while the skill itself still
+    /// lives wherever it was installed. Deriving the source from `scope`
+    /// made export look for a global skill in a local cache that had never
+    /// existed.
+    pub cache: &'a Path,
 }

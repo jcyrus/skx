@@ -17,6 +17,7 @@ skx_adapters.workspace = true
 skx_tui.workspace = true
 clap.workspace = true
 anyhow.workspace = true
+walkdir.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 dirs.workspace = true

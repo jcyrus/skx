@@ -26,27 +26,20 @@ impl SkillAdapter for AntigravityAdapter {
             return Ok(CompiledOutput::default());
         }
 
-        let contents =
-            skx_core::render_skill(skill).map_err(|source| crate::AdapterError::Render {
-                target: self.target_name(),
-                source: source.into(),
-            })?;
-
+        // The whole skill directory is linked, not just `SKILL.md`, so any
+        // `scripts/`, `references/` or `assets/` the body refers to by
+        // relative path travel with it.
         let path = match ctx.scope {
-            Scope::Local => ctx
-                .root
-                .join(".agents/skills")
-                .join(skill.frontmatter.name.as_str())
-                .join("SKILL.md"),
-            Scope::Global => ctx
-                .home
-                .join(".gemini/config/skills")
-                .join(skill.frontmatter.name.as_str())
-                .join("SKILL.md"),
-        };
+            Scope::Local => ctx.root.join(".agents/skills"),
+            Scope::Global => ctx.home.join(".gemini/config/skills"),
+        }
+        .join(skill.frontmatter.name.as_str());
 
         Ok(CompiledOutput {
-            artifacts: vec![Artifact::OwnedFile { path, contents }],
+            artifacts: vec![Artifact::OwnedDir {
+                path,
+                source: ctx.cache.to_path_buf(),
+            }],
         })
     }
 }
@@ -75,6 +68,7 @@ mod tests {
             root: Path::new("/workspace"),
             home: Path::new("/home/user"),
             scope: Scope::Local,
+            cache: Path::new("/cache/t"),
         };
         let output = AntigravityAdapter
             .compile(&skill_without_targets(), &ctx)
@@ -88,6 +82,7 @@ mod tests {
             root: Path::new("/workspace"),
             home: Path::new("/home/user"),
             scope: Scope::Local,
+            cache: Path::new("/cache/t"),
         };
         let output = AntigravityAdapter
             .compile(&skill_with_antigravity(), &ctx)
@@ -95,7 +90,7 @@ mod tests {
         assert_eq!(output.artifacts.len(), 1);
         assert_eq!(
             output.artifacts[0].path(),
-            Path::new("/workspace/.agents/skills/t/SKILL.md")
+            Path::new("/workspace/.agents/skills/t")
         );
     }
 
@@ -105,28 +100,36 @@ mod tests {
             root: Path::new("/workspace"),
             home: Path::new("/home/user"),
             scope: Scope::Global,
+            cache: Path::new("/cache/t"),
         };
         let output = AntigravityAdapter
             .compile(&skill_with_antigravity(), &ctx)
             .unwrap();
         assert_eq!(
             output.artifacts[0].path(),
-            Path::new("/home/user/.gemini/config/skills/t/SKILL.md")
+            Path::new("/home/user/.gemini/config/skills/t")
         );
     }
 
+    /// The linked unit is the skill *directory*, so anything the skill
+    /// ships beside `SKILL.md` travels with it.
     #[test]
-    fn output_is_canonical_render() {
+    fn links_the_whole_skill_directory_from_the_cache() {
         let ctx = CompileCtx {
             root: Path::new("/workspace"),
             home: Path::new("/home/user"),
             scope: Scope::Local,
+            cache: Path::new("/cache/t"),
         };
-        let skill = skill_with_antigravity();
-        let output = AntigravityAdapter.compile(&skill, &ctx).unwrap();
-        let Artifact::OwnedFile { contents, .. } = &output.artifacts[0] else {
-            panic!("expected an OwnedFile artifact");
+        let output = AntigravityAdapter
+            .compile(&skill_with_antigravity(), &ctx)
+            .unwrap();
+        let Artifact::OwnedDir { source, .. } = &output.artifacts[0] else {
+            panic!("expected an OwnedDir artifact");
         };
-        assert_eq!(contents, &skx_core::render_skill(&skill).unwrap());
+        // The adapter must use `ctx.cache` verbatim rather than
+        // re-deriving it from `scope`: export deliberately sets a different
+        // output scope than the one the skill is actually installed at.
+        assert_eq!(source, ctx.cache);
     }
 }

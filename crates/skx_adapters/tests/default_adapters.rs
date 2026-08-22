@@ -18,6 +18,7 @@ fn every_registered_adapter_compiles_the_sample_skill_without_error() {
         root: Path::new("/workspace"),
         home: Path::new("/home/user"),
         scope: Scope::Local,
+        cache: Path::new("/cache/t"),
     };
 
     let mut artifact_counts = Vec::new();
@@ -49,6 +50,7 @@ fn mcp_artifact_merges_into_vscode_config_at_expected_pointer() {
         root: Path::new("/workspace"),
         home: Path::new("/home/user"),
         scope: Scope::Local,
+        cache: Path::new("/cache/t"),
     };
 
     let mcp = default_adapters()

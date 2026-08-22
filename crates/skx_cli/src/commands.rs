@@ -57,6 +57,52 @@ pub fn init(root: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Directories the Agent Skills spec defines alongside `SKILL.md`.
+///
+/// An allowlist rather than "copy everything": a skill is often authored
+/// inside a git checkout, and mirroring the whole directory would drag
+/// `.git/`, editor state and build output into the cache.
+const BUNDLED_DIRS: &[&str] = &["scripts", "references", "assets"];
+
+/// Copies any spec directories sitting beside a `SKILL.md` into the cache.
+/// Returns the names of the ones that existed.
+fn copy_bundled_dirs(source_dir: Option<&Path>, dest_dir: &Path) -> Result<Vec<String>> {
+    let Some(source_dir) = source_dir else {
+        return Ok(Vec::new());
+    };
+    let mut copied = Vec::new();
+    for name in BUNDLED_DIRS {
+        let from = source_dir.join(name);
+        if !from.is_dir() {
+            continue;
+        }
+        let to = dest_dir.join(name);
+        // Replace rather than merge, so a file deleted upstream doesn't
+        // linger in the cache and keep resolving.
+        if to.exists() {
+            std::fs::remove_dir_all(&to)?;
+        }
+        copy_tree(&from, &to)?;
+        copied.push((*name).to_string());
+    }
+    Ok(copied)
+}
+
+fn copy_tree(source: &Path, dest: &Path) -> Result<()> {
+    std::fs::create_dir_all(dest)?;
+    for entry in walkdir::WalkDir::new(source).min_depth(1) {
+        let entry = entry?;
+        let relative = entry.path().strip_prefix(source).unwrap_or(entry.path());
+        let target = dest.join(relative);
+        if entry.file_type().is_dir() {
+            std::fs::create_dir_all(&target)?;
+        } else {
+            std::fs::copy(entry.path(), &target)?;
+        }
+    }
+    Ok(())
+}
+
 pub fn add(root: &Path, home: &Path, source: &str, global: bool) -> Result<()> {
     if source.contains("://") {
         bail!(
@@ -77,11 +123,20 @@ pub fn add(root: &Path, home: &Path, source: &str, global: bool) -> Result<()> {
 
     let skill = skx_core::load_skill(&skill_md_path)?;
     let scope = if global { Scope::Global } else { Scope::Local };
-    let dest = skx_core::skill_path(scope, root, home, skill.frontmatter.name.as_str());
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+    let dest_dir = skx_core::skill_dir(scope, root, home, skill.frontmatter.name.as_str());
+    let dest = dest_dir.join("SKILL.md");
+    std::fs::create_dir_all(&dest_dir)?;
     std::fs::copy(&skill_md_path, &dest)?;
+
+    // A skill is a directory: the spec allows `scripts/`, `references/` and
+    // `assets/` beside `SKILL.md`, and the body refers to them by relative
+    // path. Copying only `SKILL.md` left those behind, so every such
+    // reference dangled the moment the skill was linked anywhere other than
+    // its original directory.
+    let bundled = copy_bundled_dirs(skill_md_path.parent(), &dest_dir)?;
+    if !bundled.is_empty() {
+        println!("Bundled: {}", bundled.join(", "));
+    }
 
     let path = manifest_path(root);
     let mut manifest = Manifest::load(&path)?;
@@ -216,6 +271,7 @@ pub fn sync(root: &Path, home: &Path) -> Result<()> {
             root,
             home,
             scope: entry.scope,
+            cache: &skx_core::skill_dir(entry.scope, root, home, &entry.name),
         };
         for adapter in &adapters {
             let output = match adapter.compile(&skill, &ctx) {
@@ -241,6 +297,18 @@ pub fn sync(root: &Path, home: &Path) -> Result<()> {
                     symlink_target: write.symlink_target,
                 });
                 written += 1;
+
+                // skx moved files the user never asked it to move, so it
+                // says so. This fires once per skill when migrating a
+                // workspace synced by a version that linked SKILL.md alone
+                // and left the surrounding directory real.
+                for file in &write.adopted {
+                    println!(
+                        "  adopted {} into the cache for {}",
+                        file.display(),
+                        entry.name
+                    );
+                }
             }
         }
     }
@@ -289,7 +357,10 @@ pub fn export(root: &Path, home: &Path, out: &Path) -> Result<()> {
         let ctx = CompileCtx {
             root: out,
             home,
+            // Output is redirected into `out`, but the skill itself still
+            // lives wherever it was installed — hence the explicit cache.
             scope: Scope::Local,
+            cache: &skx_core::skill_dir(entry.scope, root, home, &entry.name),
         };
         for adapter in &adapters {
             let output = match adapter.compile(&skill, &ctx) {
@@ -327,6 +398,7 @@ pub fn remove(root: &Path, home: &Path, name: &str) -> Result<()> {
     for record in &records {
         match record.kind {
             ArtifactKind::OwnedFile => skx_core::remove_owned_file(&record.path)?,
+            ArtifactKind::OwnedDir => skx_core::remove_owned_dir(&record.path)?,
             ArtifactKind::Region => skx_core::remove_region(
                 &record.path,
                 record.sub_key.as_deref().unwrap_or_default(),
@@ -372,6 +444,7 @@ pub fn audit(root: &Path, home: &Path) -> Result<()> {
             root,
             home,
             scope: entry.scope,
+            cache: &skx_core::skill_dir(entry.scope, root, home, &entry.name),
         };
         for adapter in &adapters {
             let Ok(output) = adapter.compile(&skill, &ctx) else {

@@ -28,6 +28,19 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `Ctrl-Z` suspends and resumes cleanly instead of leaving the terminal in
   raw mode.
 
+### Changed
+
+- **A skill is now a directory, not a file.** Symlinking targets link the
+  whole skill directory rather than just `SKILL.md`, so `scripts/`,
+  `references/` and `assets/` travel with it. `skx add` copies those spec
+  directories into the cache; `skx export` mirrors them as real files.
+
+  Workspaces synced by an earlier version are migrated automatically on the
+  next `skx sync`. Any file sitting in the destination directory that skx
+  didn't write — a hand-edited `references/`, an agent's own state file — is
+  copied into the cache before the directory is replaced, and each rescued
+  file is reported. Nothing is deleted silently.
+
 ### Fixed
 
 - Installing a spec-compliant skill silently destroyed its `license`,
@@ -47,6 +60,13 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Skill names were validated against skx's own rules rather than the spec's:
   up to 128 characters instead of 64, and consecutive hyphens were accepted.
   Both would install a skill the downstream agents then reject.
+- Bundled `scripts/`, `references/` and `assets/` were left behind entirely:
+  only `SKILL.md` was cached and linked, so every relative file reference in
+  a skill body dangled the moment it was exported or synced anywhere other
+  than its original directory.
+- `skx export` resolved a skill's cache location from the output scope it
+  had just overridden, so exporting a globally-installed skill looked for it
+  in a local cache that had never existed.
 - Syncing on Windows failed outright for accounts without Developer Mode or
   an elevated prompt, because every symlink creation was rejected. skx now
   falls back to a copy there and records it as one, so drift detection stays

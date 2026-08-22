@@ -393,3 +393,104 @@ fn discover_hints_at_the_target_it_would_auto_declare() {
         "{text}"
     );
 }
+
+/// A skill is a directory, so `scripts/`, `references/` and `assets/` have
+/// to travel with it — the body refers to them by relative path.
+#[test]
+fn bundled_directories_are_cached_and_linked() {
+    let env = setup();
+    run(&env.workspace, &env.home, &["init"]);
+
+    let source_dir = env.skill_src.clone();
+    std::fs::create_dir_all(source_dir.join("references")).unwrap();
+    std::fs::write(source_dir.join("references/deep.md"), "reference body").unwrap();
+    std::fs::create_dir_all(source_dir.join("scripts")).unwrap();
+    std::fs::write(source_dir.join("scripts/run.sh"), "#!/bin/sh\n").unwrap();
+    // Not a spec directory: a skill authored inside a checkout shouldn't
+    // drag its VCS metadata into the cache.
+    std::fs::create_dir_all(source_dir.join(".git")).unwrap();
+    std::fs::write(source_dir.join(".git/HEAD"), "ref: refs/heads/main").unwrap();
+
+    let output = run(
+        &env.workspace,
+        &env.home,
+        &["add", env.skill_src.to_str().unwrap()],
+    );
+    assert!(output.status.success(), "{}", stdout(&output));
+
+    let cache = env.workspace.join(".skx/skills/rust-systems-expert");
+    assert!(cache.join("references/deep.md").is_file());
+    assert!(cache.join("scripts/run.sh").is_file());
+    assert!(
+        !cache.join(".git").exists(),
+        "must not vacuum up the checkout"
+    );
+
+    run(&env.workspace, &env.home, &["sync"]);
+
+    // The linked destination resolves the bundled files, which is the whole
+    // point: before this, only SKILL.md was linked and every relative
+    // reference in the body dangled.
+    let linked = env.workspace.join(".claude/skills/rust-systems-expert");
+    assert_eq!(
+        std::fs::read_to_string(linked.join("references/deep.md")).unwrap(),
+        "reference body"
+    );
+    assert!(linked.join("SKILL.md").is_file());
+}
+
+/// The migration hazard: a workspace synced by an older skx has a *real*
+/// directory at the destination holding the user's own files beside skx's
+/// SKILL.md symlink. Replacing it wholesale would delete them.
+#[test]
+fn syncing_over_a_legacy_layout_rescues_user_files_instead_of_deleting_them() {
+    let env = setup();
+    run(&env.workspace, &env.home, &["init"]);
+    run(
+        &env.workspace,
+        &env.home,
+        &["add", env.skill_src.to_str().unwrap()],
+    );
+
+    // Reconstruct the old layout by hand: a real directory containing a
+    // SKILL.md symlink into the cache, plus content skx never wrote.
+    let legacy = env.workspace.join(".claude/skills/rust-systems-expert");
+    std::fs::create_dir_all(legacy.join("references")).unwrap();
+    std::fs::write(legacy.join("references/notes.md"), "hand-written notes").unwrap();
+    std::fs::write(legacy.join(".agent_version"), "7").unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(
+        env.workspace
+            .join(".skx/skills/rust-systems-expert/SKILL.md"),
+        legacy.join("SKILL.md"),
+    )
+    .unwrap();
+
+    let output = run(&env.workspace, &env.home, &["sync"]);
+    assert!(output.status.success(), "{}", stdout(&output));
+
+    // Rescued into the cache...
+    let cache = env.workspace.join(".skx/skills/rust-systems-expert");
+    assert_eq!(
+        std::fs::read_to_string(cache.join("references/notes.md")).unwrap(),
+        "hand-written notes",
+        "user files must survive the migration"
+    );
+    assert_eq!(
+        std::fs::read_to_string(cache.join(".agent_version")).unwrap(),
+        "7"
+    );
+
+    // ...and therefore still reachable at the destination afterwards.
+    assert_eq!(
+        std::fs::read_to_string(legacy.join("references/notes.md")).unwrap(),
+        "hand-written notes"
+    );
+
+    // And skx says so rather than moving files silently.
+    assert!(
+        stdout(&output).contains("adopted"),
+        "the migration must be reported: {}",
+        stdout(&output)
+    );
+}

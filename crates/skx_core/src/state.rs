@@ -31,6 +31,7 @@ pub fn artifact_kind_and_sub_key(artifact: &Artifact) -> (ArtifactKind, Option<S
         Artifact::OwnedFile { .. } => (ArtifactKind::OwnedFile, None),
         Artifact::Region { marker, .. } => (ArtifactKind::Region, Some(marker.clone())),
         Artifact::MergeJson { pointer, .. } => (ArtifactKind::MergeJson, Some(pointer.clone())),
+        Artifact::OwnedDir { .. } => (ArtifactKind::OwnedDir, None),
     }
 }
 
@@ -45,6 +46,8 @@ pub enum ArtifactKind {
     Region,
     /// skx owns specific keys inside a structured config the user also edits.
     MergeJson,
+    /// skx owns a whole skill directory, mirrored from the cache.
+    OwnedDir,
 }
 
 /// A fingerprint of one artifact `skx` wrote for one skill/target pair.

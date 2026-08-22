@@ -71,6 +71,7 @@ mod tests {
             root: Path::new("/workspace"),
             home: Path::new("/home/user"),
             scope,
+            cache: Path::new("/cache/t"),
         }
     }
 

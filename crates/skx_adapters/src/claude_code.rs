@@ -50,26 +50,20 @@ impl SkillAdapter for ClaudeCodeAdapter {
             return Ok(CompiledOutput::default());
         }
 
-        let contents = skx_core::render_skill(skill).map_err(|source| AdapterError::Render {
-            target: self.target_name(),
-            source: source.into(),
-        })?;
-
+        // The whole skill directory is linked, not just `SKILL.md`, so any
+        // `scripts/`, `references/` or `assets/` the body refers to by
+        // relative path travel with it.
         let path = match ctx.scope {
-            Scope::Local => ctx
-                .root
-                .join(".claude/skills")
-                .join(skill.frontmatter.name.as_str())
-                .join("SKILL.md"),
-            Scope::Global => ctx
-                .home
-                .join(".claude/skills")
-                .join(skill.frontmatter.name.as_str())
-                .join("SKILL.md"),
-        };
+            Scope::Local => ctx.root.join(".claude/skills"),
+            Scope::Global => ctx.home.join(".claude/skills"),
+        }
+        .join(skill.frontmatter.name.as_str());
 
         Ok(CompiledOutput {
-            artifacts: vec![Artifact::OwnedFile { path, contents }],
+            artifacts: vec![Artifact::OwnedDir {
+                path,
+                source: ctx.cache.to_path_buf(),
+            }],
         })
     }
 }
@@ -93,6 +87,7 @@ mod tests {
             root: Path::new("/workspace"),
             home: Path::new("/home/user"),
             scope: Scope::Local,
+            cache: Path::new("/cache/t"),
         };
         let skill = parse_skill(
             "---\nname: t\ndescription: d\n---\nbody\n",
@@ -109,6 +104,7 @@ mod tests {
             root: Path::new("/workspace"),
             home: Path::new("/home/user"),
             scope: Scope::Local,
+            cache: Path::new("/cache/t"),
         };
         let skill = skill_with("  claude_code:\n    enabled: false\n");
         let output = ClaudeCodeAdapter.compile(&skill, &ctx).unwrap();
@@ -121,14 +117,20 @@ mod tests {
             root: Path::new("/workspace"),
             home: Path::new("/home/user"),
             scope: Scope::Local,
+            cache: Path::new("/cache/t"),
         };
         let skill = skill_with("  claude_code:\n    enabled: true\n");
         let output = ClaudeCodeAdapter.compile(&skill, &ctx).unwrap();
-        let Artifact::OwnedFile { contents, path } = &output.artifacts[0] else {
-            panic!("expected an OwnedFile artifact");
+        // The linked unit is the skill *directory*, so anything the skill
+        // ships beside `SKILL.md` travels with it.
+        let Artifact::OwnedDir { path, source } = &output.artifacts[0] else {
+            panic!("expected an OwnedDir artifact");
         };
-        assert_eq!(path, Path::new("/workspace/.claude/skills/t/SKILL.md"));
-        assert_eq!(contents, &skx_core::render_skill(&skill).unwrap());
+        assert_eq!(path, Path::new("/workspace/.claude/skills/t"));
+        // The adapter must use `ctx.cache` verbatim rather than
+        // re-deriving it from `scope`: export deliberately sets a different
+        // output scope than the one the skill is actually installed at.
+        assert_eq!(source, ctx.cache);
     }
 
     #[test]
@@ -137,12 +139,13 @@ mod tests {
             root: Path::new("/workspace"),
             home: Path::new("/home/user"),
             scope: Scope::Global,
+            cache: Path::new("/cache/t"),
         };
         let skill = skill_with("  claude_code:\n    enabled: true\n");
         let output = ClaudeCodeAdapter.compile(&skill, &ctx).unwrap();
         assert_eq!(
             output.artifacts[0].path(),
-            Path::new("/home/user/.claude/skills/t/SKILL.md")
+            Path::new("/home/user/.claude/skills/t")
         );
     }
 }

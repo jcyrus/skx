@@ -1134,10 +1134,12 @@ fn run_sync(mut plan: SyncPlan, tx: &mpsc::Sender<SyncProgress>) {
         }
 
         let cache_file = skx_core::skill_path(entry.scope, &plan.root, &plan.home, &entry.name);
+        let cache = skx_core::skill_dir(entry.scope, &plan.root, &plan.home, &entry.name);
         let ctx = CompileCtx {
             root: &plan.root,
             home: &plan.home,
             scope: entry.scope,
+            cache: &cache,
         };
         for adapter in &adapters {
             let Ok(output) = adapter.compile(skill, &ctx) else {
@@ -1258,6 +1260,7 @@ fn target_status(
         root,
         home,
         scope: entry.scope,
+        cache: &skx_core::skill_dir(entry.scope, root, home, &entry.name),
     };
     let output = match adapter.compile(skill, &ctx) {
         Ok(output) => output,

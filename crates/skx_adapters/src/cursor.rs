@@ -106,6 +106,7 @@ mod tests {
             root: Path::new("/workspace"),
             home: Path::new("/home/user"),
             scope: Scope::Local,
+            cache: Path::new("/cache/t"),
         }
     }
 

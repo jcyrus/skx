@@ -23,6 +23,13 @@ pub struct WriteResult {
     pub content_hash: String,
     /// Set when this write was a symlink rather than a plain file.
     pub symlink_target: Option<PathBuf>,
+    /// Files rescued out of the destination and into the cache before it
+    /// was replaced — see `adopt_into_cache`. Normally empty; non-empty
+    /// exactly once per skill, when migrating a workspace that predates
+    /// directory-linked skills. Callers should report these rather than
+    /// swallow them: skx moved files the user did not ask it to move.
+    #[allow(clippy::struct_field_names)]
+    pub adopted: Vec<PathBuf>,
 }
 
 /// Materializes `artifact` on disk.
@@ -64,6 +71,7 @@ pub fn apply(
                     Ok(WriteResult {
                         content_hash: hash_content(&resolved),
                         symlink_target: linked.then(|| target.to_path_buf()),
+                        adopted: Vec::new(),
                     })
                 }
                 LinkStrategy::Compile => {
@@ -75,6 +83,7 @@ pub fn apply(
                     Ok(WriteResult {
                         content_hash: hash_content(contents.as_bytes()),
                         symlink_target: None,
+                        adopted: Vec::new(),
                     })
                 }
             }
@@ -98,6 +107,29 @@ pub fn apply(
             Ok(WriteResult {
                 content_hash: hash_content(contents.trim_end().as_bytes()),
                 symlink_target: None,
+                adopted: Vec::new(),
+            })
+        }
+        Artifact::OwnedDir { path, source } => {
+            create_parent_dirs(path)?;
+            let adopted = adopt_into_cache(path, source)?;
+
+            // `Compile` means "produce standalone files" — that's what
+            // `skx export` asks for, and a symlink pointing back into the
+            // user's cache is precisely what must not end up in an export
+            // that gets committed or shipped to CI.
+            let linked = match strategy {
+                LinkStrategy::Compile => false,
+                LinkStrategy::Symlink => replace_with_symlink_dir(path, source)?,
+            };
+            if !linked {
+                remove_dir_or_link(path)?;
+                copy_dir_all(source, path)?;
+            }
+            Ok(WriteResult {
+                content_hash: hash_tree(source)?,
+                symlink_target: linked.then(|| source.clone()),
+                adopted,
             })
         }
         Artifact::MergeJson {
@@ -118,6 +150,7 @@ pub fn apply(
             Ok(WriteResult {
                 content_hash: hash_content(&value_bytes),
                 symlink_target: None,
+                adopted: Vec::new(),
             })
         }
     }
@@ -178,6 +211,16 @@ pub fn audit_record(record: &ArtifactRecord, fresh_hash: Option<&str>) -> Result
 /// Returns `None` if the file, region, or pointer is missing.
 fn read_current_bytes(record: &ArtifactRecord) -> Result<Option<Vec<u8>>> {
     match record.kind {
+        // A directory has no single byte stream, so its fingerprint stands
+        // in for one: `hash_tree` already returns a stable digest over
+        // every file beneath it, and hashing that digest again gives
+        // `audit_record` the same shape it uses for every other kind.
+        ArtifactKind::OwnedDir => {
+            if !record.path.is_dir() {
+                return Ok(None);
+            }
+            Ok(Some(hash_tree(&record.path)?.into_bytes()))
+        }
         ArtifactKind::OwnedFile => match std::fs::read(&record.path) {
             Ok(bytes) => Ok(Some(bytes)),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
@@ -259,6 +302,7 @@ pub fn fresh_hash(
             }
             LinkStrategy::Compile => Ok(hash_content(contents.as_bytes())),
         },
+        Artifact::OwnedDir { source, .. } => hash_tree(source),
         Artifact::Region { contents, .. } => Ok(hash_content(contents.trim_end().as_bytes())),
         Artifact::MergeJson { value, .. } => {
             let bytes =
@@ -266,6 +310,15 @@ pub fn fresh_hash(
             Ok(hash_content(&bytes))
         }
     }
+}
+
+/// Removes an `OwnedDir` artifact — a directory symlink, or the mirrored
+/// copy made on platforms that can't create one.
+///
+/// Unlinks rather than following: deleting *through* a symlink would take
+/// the cached skill with it.
+pub fn remove_owned_dir(path: &Path) -> Result<()> {
+    remove_dir_or_link(path)
 }
 
 /// Removes an `OwnedFile` artifact (plain file or symlink) at `path`, if
@@ -428,9 +481,189 @@ fn remove_existing(path: &Path) -> Result<()> {
     }
 }
 
+/// Rescues user content out of a destination directory before it is
+/// replaced by a link to the cache.
+///
+/// This is the migration path for workspaces synced by a version that
+/// linked `SKILL.md` alone. Those left the *containing* directory real, so
+/// anything the skill shipped — `references/`, `scripts/`, and whatever
+/// else an agent dropped in — lives there and nowhere else. Replacing that
+/// directory wholesale would delete it.
+///
+/// Only real files are adopted, never symlinks: a symlink there is skx's
+/// own previous artifact, and copying it back would reintroduce the file it
+/// points at. Existing cache entries always win, so re-running this can't
+/// overwrite the canonical copy with a stale one.
+fn adopt_into_cache(path: &Path, cache: &Path) -> Result<Vec<PathBuf>> {
+    // Already a link (or absent) means there is nothing of the user's here.
+    let Ok(metadata) = path.symlink_metadata() else {
+        return Ok(Vec::new());
+    };
+    if metadata.file_type().is_symlink() || !metadata.is_dir() {
+        return Ok(Vec::new());
+    }
+
+    let mut adopted = Vec::new();
+    for entry in walkdir::WalkDir::new(path).min_depth(1).follow_links(false) {
+        let entry = entry.map_err(|source| SkillError::Walk {
+            path: source.path().unwrap_or(Path::new("")).to_path_buf(),
+            source,
+        })?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let relative = entry.path().strip_prefix(path).unwrap_or(entry.path());
+        let destination = cache.join(relative);
+        if destination.exists() {
+            continue;
+        }
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent).map_err(|source| SkillError::Io {
+                path: parent.to_path_buf(),
+                source,
+            })?;
+        }
+        std::fs::copy(entry.path(), &destination).map_err(|source| SkillError::Io {
+            path: destination.clone(),
+            source,
+        })?;
+        adopted.push(relative.to_path_buf());
+    }
+    adopted.sort();
+    Ok(adopted)
+}
+
+/// Directory equivalent of [`replace_with_symlink`]. Returns `false` when
+/// the platform refused and the caller should mirror the tree instead.
+fn replace_with_symlink_dir(path: &Path, target: &Path) -> Result<bool> {
+    remove_dir_or_link(path)?;
+    match symlink_dir(target, path) {
+        Ok(()) => Ok(true),
+        Err(source) if is_unsupported_symlink(&source) => Ok(false),
+        Err(source) => Err(SkillError::Io {
+            path: path.to_path_buf(),
+            source,
+        }),
+    }
+}
+
+/// Clears whatever sits at `path` so a link or a fresh copy can take its
+/// place. A symlink is unlinked rather than followed — removing the
+/// directory *through* an existing link would delete the cached skill it
+/// points at, which is the copy everything else depends on.
+fn remove_dir_or_link(path: &Path) -> Result<()> {
+    let Ok(metadata) = path.symlink_metadata() else {
+        return Ok(());
+    };
+    let result = if metadata.file_type().is_symlink() {
+        remove_symlinked_dir(path)
+    } else if metadata.is_dir() {
+        std::fs::remove_dir_all(path)
+    } else {
+        std::fs::remove_file(path)
+    };
+    result.map_err(|source| SkillError::Io {
+        path: path.to_path_buf(),
+        source,
+    })
+}
+
+/// Unlinks a directory symlink. Unix treats it as a file; Windows needs
+/// `remove_dir` for a directory junction and `remove_file` for a file link,
+/// so try both rather than guessing which kind it is.
+fn remove_symlinked_dir(path: &Path) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        std::fs::remove_file(path)
+    }
+    #[cfg(not(unix))]
+    {
+        std::fs::remove_dir(path).or_else(|_| std::fs::remove_file(path))
+    }
+}
+
+/// Recursively mirrors `source` into `dest`, for platforms that won't
+/// symlink.
+fn copy_dir_all(source: &Path, dest: &Path) -> Result<()> {
+    std::fs::create_dir_all(dest).map_err(|source| SkillError::Io {
+        path: dest.to_path_buf(),
+        source,
+    })?;
+    for entry in walkdir::WalkDir::new(source).min_depth(1) {
+        let entry = entry.map_err(|source| SkillError::Walk {
+            path: source.path().unwrap_or(Path::new("")).to_path_buf(),
+            source,
+        })?;
+        let relative = entry.path().strip_prefix(source).unwrap_or(entry.path());
+        let target = dest.join(relative);
+        if entry.file_type().is_dir() {
+            std::fs::create_dir_all(&target)
+        } else {
+            std::fs::copy(entry.path(), &target).map(|_| ())
+        }
+        .map_err(|source| SkillError::Io {
+            path: target.clone(),
+            source,
+        })?;
+    }
+    Ok(())
+}
+
+/// A stable fingerprint of every file beneath `dir`.
+///
+/// Relative paths are sorted before hashing so the digest doesn't depend on
+/// directory iteration order, and each path is mixed in alongside its
+/// contents — otherwise renaming a file without changing its bytes would
+/// leave the tree looking untouched.
+fn hash_tree(dir: &Path) -> Result<String> {
+    let mut entries: Vec<(String, Vec<u8>)> = Vec::new();
+    for entry in walkdir::WalkDir::new(dir).min_depth(1) {
+        let entry = entry.map_err(|source| SkillError::Walk {
+            path: source.path().unwrap_or(Path::new("")).to_path_buf(),
+            source,
+        })?;
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        let relative = entry
+            .path()
+            .strip_prefix(dir)
+            .unwrap_or(entry.path())
+            .to_string_lossy()
+            // Normalize separators so a tree hashed on Windows matches the
+            // same tree hashed on Unix.
+            .replace('\\', "/");
+        let bytes = std::fs::read(entry.path()).map_err(|source| SkillError::Io {
+            path: entry.path().to_path_buf(),
+            source,
+        })?;
+        entries.push((relative, bytes));
+    }
+    entries.sort_by(|a, b| a.0.cmp(&b.0));
+
+    let mut buffer = Vec::new();
+    for (relative, bytes) in entries {
+        buffer.extend_from_slice(relative.as_bytes());
+        buffer.push(0);
+        buffer.extend_from_slice(&hash_content(&bytes).into_bytes());
+        buffer.push(b'\n');
+    }
+    Ok(hash_content(&buffer))
+}
+
 #[cfg(unix)]
 fn symlink(target: &Path, link: &Path) -> std::io::Result<()> {
     std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(unix)]
+fn symlink_dir(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
+}
+
+#[cfg(windows)]
+fn symlink_dir(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_dir(target, link)
 }
 
 #[cfg(windows)]
