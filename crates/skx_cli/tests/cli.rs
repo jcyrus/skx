@@ -1,7 +1,7 @@
 //! End-to-end tests that drive the actual `skx` binary as a subprocess —
 //! the same way a user would — against a temporary workspace and a fake
-//! `HOME`, so nothing here can touch the real filesystem outside the test's
-//! own tempdir.
+//! home directory, so nothing here can touch the real filesystem outside
+//! the test's own tempdir.
 
 use std::path::Path;
 use std::process::Output;
@@ -10,18 +10,15 @@ const SAMPLE_SKILL: &str = "---\nname: rust-systems-expert\ndescription: Deep sy
 
 /// Runs the real binary against a throwaway home directory.
 ///
-/// `HOME` alone isn't enough: `dirs::home_dir()` reads `USERPROFILE` on
-/// Windows and ignores `HOME` entirely, so tests that set only `HOME` there
-/// resolved the *developer's* actual home and then asserted against a temp
-/// directory that skx had never written to. Setting both keeps the sandbox
-/// real on every platform — and matters beyond test hygiene, since a test
-/// escaping into the real home would write skills into it.
+/// `SKX_HOME` rather than `HOME`: `dirs::home_dir()` resolves through
+/// `SHGetKnownFolderPath` on Windows and ignores both `HOME` and
+/// `USERPROFILE`, so there was no environment variable that could redirect
+/// it. Global-scope tests were writing skills into the real user profile.
 fn run(workspace: &Path, home: &Path, args: &[&str]) -> Output {
     std::process::Command::new(env!("CARGO_BIN_EXE_skx"))
         .args(args)
         .current_dir(workspace)
-        .env("HOME", home)
-        .env("USERPROFILE", home)
+        .env(skx_core::HOME_OVERRIDE, home)
         .output()
         .expect("failed to run skx binary")
 }

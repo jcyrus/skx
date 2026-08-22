@@ -19,7 +19,7 @@ pub mod state;
 pub mod sync;
 
 pub use artifact::{Artifact, CompileCtx, CompiledOutput, LinkStrategy};
-pub use cache::{cache_dir, skill_dir, skill_path};
+pub use cache::{HOME_OVERRIDE, cache_dir, home_dir, skill_dir, skill_path};
 pub use config::{Config, ThemePreference, config_path};
 pub use discover::{
     DiscoveredSkill, FoundIn, default_pick, group_by_name, scan_for_unmanaged_skills,

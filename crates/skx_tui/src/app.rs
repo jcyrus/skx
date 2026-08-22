@@ -1306,7 +1306,7 @@ fn resolve_palette(config: &skx_core::Config) -> Palette {
 /// directory the same way `skx_cli` does.
 pub fn default_root_and_home() -> anyhow::Result<(PathBuf, PathBuf)> {
     let root = std::env::current_dir()?;
-    let home = dirs::home_dir()
+    let home = skx_core::home_dir()
         .ok_or_else(|| anyhow::anyhow!("could not determine the current user's home directory"))?;
     Ok((root, home))
 }

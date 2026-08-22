@@ -63,7 +63,7 @@ enum Command {
 }
 
 fn home_dir() -> Result<std::path::PathBuf> {
-    dirs::home_dir().context("could not determine the current user's home directory")
+    skx_core::home_dir().context("could not determine the current user's home directory")
 }
 
 fn main() -> Result<()> {

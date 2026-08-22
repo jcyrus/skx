@@ -23,7 +23,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **Background sync** on a worker thread with a determinate progress bar.
 - **Quit confirmation**, always shown when work is unsynced or a sync is
   running, and configurable for the quiet case.
-- **Config file** at `~/.config/skx/config.toml`.
+- **Config file** at `~/.config/skx/config.toml`, and `SKX_HOME` to relocate
+  everything skx keeps in the home directory.
 - **Artifacts pane** showing where the selected skill was actually written.
 - `Ctrl-Z` suspends and resumes cleanly instead of leaving the terminal in
   raw mode.

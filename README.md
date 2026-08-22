@@ -188,6 +188,11 @@ on every build, so the palette can't silently regress.
 SKX_THEME=light skx     # or dark
 ```
 
+`SKX_HOME` relocates everything skx keeps in your home directory — the global
+cache and `config.toml` — which is useful for keeping config on another volume,
+and is what makes skx sandboxable at all on Windows, where the home directory is
+resolved through a Win32 API that no environment variable can redirect.
+
 Resolution order is `SKX_THEME` → `COLORFGBG` → dark. There is no portable way to
 *ask* a terminal for its background colour — the OSC 11 query needs a raw-mode
 read with a timeout and several emulators ignore it silently — so the explicit
